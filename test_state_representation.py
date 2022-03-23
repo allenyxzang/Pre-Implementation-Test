@@ -1,4 +1,3 @@
-from distutils.command.build import build
 from time import time
 import numpy as np
 from numpy.linalg import matrix_power
