@@ -1,30 +1,31 @@
 from time import time
 import numpy as np
-from numpy.linalg import matrix_power
 from numpy.random import default_rng
+from scipy.linalg import fractional_matrix_power
 from scipy.sparse import csr_matrix
 from scipy.special import binom
 from math import factorial
 
+
 # simulation parameters
 Truncation = 2 # global truncation
 Formalism = "dm" # global formalism of photonic state
-SPDC1_mean = 0.1 # mean photon number in one output mode of SPDC source 1
-SPDC2_mean = 0.1 # mean photon number in one output mode of SPDC source 2
-Memo1_abs_effi = 0.9 # memory 1 absorption efficiency
-Memo2_abs_effi = 0.9 # memory 2 absorption efficiency
-Bsm1_loss = 0.9 # loss between memory 1 and BSM
-Bsm2_loss = 0.9 # loss between memory 2 and BSM
-Bsm1_effi = 0.9 # efficiency of photon detector 1 for BSM
-Bsm2_effi = 0.9 # efficiency of photon detector 2 for BSM
-DM1_effi = 0.9 # efficiency of photon detector 1 for density matrix measurement
-DM2_effi = 0.9 # efficiency of photon detector 2 for density matrix measurement
+SPDC1_mean = 0.3 # mean photon number in one output mode of SPDC source 1
+SPDC2_mean = 0.3 # mean photon number in one output mode of SPDC source 2
+Memo1_abs_effi = 1. # memory 1 absorption efficiency
+Memo2_abs_effi = 1. # memory 2 absorption efficiency
+Bsm1_loss = 0. # loss between memory 1 and BSM
+Bsm2_loss = 0. # loss between memory 2 and BSM
+Bsm1_effi = 1. # efficiency of photon detector 1 for BSM
+Bsm2_effi = 1. # efficiency of photon detector 2 for BSM
 Phase_bsm = 0 # relative phase between two optical paths from source to BSM
 Pulse_num = 1000 # number of pulses to generate
 
 # TODO: decay as function of time (in final implementation)
 Memo1_effi_decay_rate = 0. # decay rate of memory 1 retrieval efficiency, modeled as exponential decay
 Memo2_effi_decay_rate = 0. # decay rate of memory 2 retrieval efficiency, modeled as exponential decay
+DM1_effi = 0.9 # efficiency of photon detector 1 for density matrix measurement
+DM2_effi = 0.9 # efficiency of photon detector 2 for density matrix measurement
 
 
 def build_basis(truncation, number):
@@ -40,14 +41,14 @@ def build_create(truncation):
     data = np.array([np.sqrt(i+1) for i in range(truncation)]) # elements in create/annihilation operator matrix
     row = np.array([i+1 for i in range(truncation)])
     col = np.array([i for i in range(truncation)])
-    create = csr_matrix((data, (row, col)), size=(truncation+1, truncation+1)).toarray()
+    create = csr_matrix((data, (row, col)), shape=(truncation+1, truncation+1)).toarray()
 
     return create
 
 
 def build_povm1(truncation, create, destroy):
     """Generate matrix of POVM operator representing a photon detector having 1 click."""
-    series_elem_list = [(-1)**i*matrix_power(create,i+1).dot(matrix_power(destroy,i+1))/factorial(i+1) for i in range(truncation)]
+    series_elem_list = [(-1)**i*fractional_matrix_power(create,i+1).dot(fractional_matrix_power(destroy,i+1))/factorial(i+1) for i in range(truncation)]
     povm1 = sum(series_elem_list)
 
     return povm1
@@ -60,7 +61,7 @@ def build_kraus_ops(truncation, loss_rate):
         kraus_op = np.zeros((truncation+1,truncation+1))
         for n in range(truncation+1-k):
             coeff = np.sqrt(binom(n+k,k))*np.sqrt((1-loss_rate)**(n)*loss_rate**k)
-            op = np.dot(build_basis(truncation,n), build_basis(truncation,n+k).H) # transition operator
+            op = np.outer(build_basis(truncation,n), build_basis(truncation,n+k).conj().T) # transition operator
             kraus_op += coeff*op
         kraus_ops.append(kraus_op)
 
@@ -76,16 +77,16 @@ def apply_quantum_channel(state, kraus_ops):
     """
     shape = state.shape
     if len(shape) != 2:
-        raise ValueError("Input state needs to be density matrix. Invalid input state " + state)
+        raise ValueError("Input state needs to be density matrix.")
     elif shape[0] != shape[1]:
-        raise ValueError("Input state needs to be density matrix. Invalid input state " + state)
+        raise ValueError("Input state needs to be density matrix.")
     for op in kraus_ops:
         if op.shape != shape:
-            raise ValueError("Kraus operators need to have compatible dimension with state. Invalid Kraus operator list " + kraus_ops)
+            raise ValueError("Kraus operators need to have compatible dimension with state.")
 
     new_state = np.zeros(shape)
     for op in kraus_ops:
-        new_state += op.dot(state).dot(op.H)
+        new_state += op.dot(state).dot(op.conj().T)
 
     return new_state
 
@@ -99,13 +100,13 @@ def measure_dm(state, meas_op):
     """
     shape = state.shape
     if len(shape) != 2:
-        raise ValueError("Input state needs to be density matrix. Invalid state shape " + state)
+        raise ValueError("Input state needs to be density matrix.")
     elif shape[0] != shape[1]:
-        raise ValueError("Input state needs to be density matrix. Invalid state shape " + state)
+        raise ValueError("Input state needs to be density matrix.")
     if meas_op.shape != shape:
-        raise ValueError("Measurement operator needs to have compatible dimension with state. Invalid Kraus operator list " + meas_op)
+        raise ValueError("Measurement operator needs to have compatible dimension with state.")
 
-    post_meas_dm = meas_op.dot(state).dot(meas_op.H)/np.trace(meas_op.dot(state).dot(meas_op.H))
+    post_meas_dm = meas_op.dot(state).dot(meas_op.conj().T)/np.trace(meas_op.dot(state).dot(meas_op.conj().T))
     
     return post_meas_dm
 
@@ -124,7 +125,7 @@ def build_bell_state(truncation, sign, phase=0, formalism="dm"):
     else:
         raise ValueError("Invalid Bell state sign type " + sign)
 
-    dm = np.dot(ket, ket.H)
+    dm = np.outer(ket, ket.conj().T)
 
     if formalism == "dm":
         return dm
@@ -138,16 +139,16 @@ def partial_trace_bsm(state, truncation):
     """Trace out the two measured photonic subsystems and return a composite state stored in two quantum memories."""
     shape = state.shape
     if len(shape) != 2:
-        raise ValueError("Input state needs to be density matrix. Invalid state shape " + state)
+        raise ValueError("Input state needs to be density matrix.")
     elif shape[0] != shape[1]:
-        raise ValueError("Input state needs to be density matrix. Invalid state shape " + state)
+        raise ValueError("Input state needs to be density matrix.")
     elif shape[0] != (truncation+1)**4:
-        raise ValueError("Input state needs to be constructed by four subsystems of same dimension. Invalid state dimension " + state)
+        raise ValueError("Input state needs to be constructed by four subsystems of same dimension.")
 
     state_tr_bsm1 = np.trace(state.reshape((truncation+1,)*8), axis1=1, axis2=5) # trace out subsystem measured by bsm1
     state_trtr_bsm2 = np.trace(state_tr_bsm1.reshape((truncation+1,)*6), axis1=1, axis2=4) # further trace out subsystem measured by bsm2
 
-    state_trtr_bsm2.reshape(((truncation+1)**2,)*2)
+    state_trtr_bsm2 = state_trtr_bsm2.reshape(((truncation+1)**2,)*2)
 
     return state_trtr_bsm2
 
@@ -184,7 +185,7 @@ class SPDCOutputState():
             state_vec += amp*basis
 
         # create density matrix 
-        state_dm = np.dot(state_vec,state_vec.H)
+        state_dm = np.outer(state_vec,state_vec.conj().T)
 
         if self.formalism == "dm":
             self.state = state_dm
@@ -218,13 +219,13 @@ class PhotonDetector():
         # generate creation and annihilation operators for one mode
         identity = np.eye(self.truncation+1)
         create = build_create(self.truncation)
-        destroy = create.H
+        destroy = create.conj().T
 
         # generate POVM operators and measurement for one mode
         self.povm1 = build_povm1(self.truncation, self.efficiency*create, self.efficiency*destroy)
         self.povm0 = identity - self.povm1
-        self.meas1 = matrix_power(self.povm1,1/2)
-        self.meas0 = matrix_power(self.povm0,1/2)
+        self.meas1 = fractional_matrix_power(self.povm1,1/2)
+        self.meas0 = fractional_matrix_power(self.povm0,1/2)
 
 
 class BeamsplitterMeas():
@@ -253,9 +254,9 @@ class BeamsplitterMeas():
 
         # Modified mode operators in Heisenberg picture by beamsplitter transformation considering inefficiency (ignoring relative phase)
         create1 = (np.kron(self.efficiency1*create,identity) + np.exp(1j*self.phase)*np.kron(identity,self.efficiency2*create))/np.sqrt(2)
-        destroy1 = create1.H
+        destroy1 = create1.conj().T
         create2 = (np.kron(self.efficiency1*create,identity) - np.exp(1j*self.phase)*np.kron(identity,self.efficiency2*create))/np.sqrt(2)
-        destroy2 = create2.H
+        destroy2 = create2.conj().T
 
         self.povm1 = build_povm1(self.truncation,create1,destroy1)
         self.povm2 = build_povm1(self.truncation,create2,destroy2)
@@ -278,15 +279,15 @@ class BSM(BeamsplitterMeas):
         meas2 (array): The matrix of measurement operator determined by square root of povm01.
         rng: Random number generator.
     """
-    def __init__(self):
+    def __init__(self, truncation, efficiency1=1, efficiency2=1, phase=0, seed=0):
         super().__init__(truncation, efficiency1=1, efficiency2=1, phase=0, seed=0)
         
         identity = np.eye(self.truncation+1)
         self.bsm1 = np.dot(self.povm1,np.kron(identity,identity)-self.povm2)
         self.bsm2 = np.dot(np.kron(identity,identity)-self.povm1,self.povm2)
 
-        self.meas1 = matrix_power(self.bsm1,1/2)
-        self.meas2 = matrix_power(self.bsm2,1/2)
+        self.meas1 = fractional_matrix_power(self.bsm1,1/2)
+        self.meas2 = fractional_matrix_power(self.bsm2,1/2)
 
 
 class DMDiagonalMeas():
@@ -336,7 +337,7 @@ class DMOffDiagonalMeas(BeamsplitterMeas):
         povm2 (array): The matrix of POVM operator corresponding to PD 2 behind BS having 1 click.
         rng: Random number generator.
     """
-    def __init__(self):
+    def __init__(self, truncation, efficiency1=1, efficiency2=1, phase=0, seed=0):
         super().__init__(truncation, efficiency1=1, efficiency2=1, phase=0, seed=0)
 
 
@@ -367,46 +368,47 @@ def run_simulation(pulse_number, truncation, formalism, bsm1_effi, bsm2_effi, bs
     for i in range(pulse_number):
         # initailization
         bsm_seed = i
-        initial_state1 = SPDCOutputState(mean_num=spdc1_mean, truncation=Truncation, formalism=Formalism)
-        initial_state2 = SPDCOutputState(mean_num=spdc2_mean, truncation=Truncation, formalism=Formalism)
+        initial_state1 = SPDCOutputState(mean_num=spdc1_mean, truncation=truncation, formalism=formalism)
+        initial_state2 = SPDCOutputState(mean_num=spdc2_mean, truncation=truncation, formalism=formalism)
         bsm = BSM(truncation, efficiency1=bsm1_effi, efficiency2=bsm2_effi, seed=bsm_seed)
         
         if formalism == "dm":
             joint_dm_init = np.kron(initial_state1.state, initial_state2.state)
         elif formalism == "ket":
-            joint_dm_init = np.kron(initial_state1.state.dot(initial_state1.state.H), initial_state2.state.dot(initial_state2.state.H))
+            joint_ket_init = np.kron(initial_state1.state, initial_state2.state)
+            joint_dm_init = np.outer(joint_ket_init,joint_ket_init.conj().T)
         else:
             raise ValueError("Invalid quantum state formalism " + formalism)
 
         # apply photon loss channels to state, each channel applies to only a subsystem so they should commute, order of application should not matter
         # 1st memo1 abs loss
         memo1_abs_kraus_ops = build_kraus_ops(truncation, 1-memo1_abs_effi)
-        for i in len(memo1_abs_kraus_ops):
+        for i in range(len(memo1_abs_kraus_ops)):
             memo1_abs_kraus_ops[i] = np.kron(np.kron(memo1_abs_kraus_ops[i],np.eye(truncation+1)),np.eye((truncation+1)**2))
         state_memo1_loss = apply_quantum_channel(joint_dm_init, memo1_abs_kraus_ops)
         # 2nd memo2 abs loss
         memo2_abs_kraus_ops = build_kraus_ops(truncation, 1-memo2_abs_effi)
-        for i in len(memo2_abs_kraus_ops):
+        for i in range(len(memo2_abs_kraus_ops)):
             memo2_abs_kraus_ops[i] = np.kron(np.eye((truncation+1)**2),np.kron(np.eye(truncation+1),memo2_abs_kraus_ops[i]))
         state_memo2_loss = apply_quantum_channel(state_memo1_loss, memo2_abs_kraus_ops)
         # 3rd bsm1 transmission loss
         bsm1_loss_kraus_ops = build_kraus_ops(truncation, bsm1_loss)
-        for i in len(bsm1_loss_kraus_ops):
+        for i in range(len(bsm1_loss_kraus_ops)):
             bsm1_loss_kraus_ops[i] = np.kron(np.kron(np.eye(truncation+1),bsm1_loss_kraus_ops[i]),np.eye((truncation+1)**2))
         state_bsm1_loss = apply_quantum_channel(state_memo2_loss, bsm1_loss_kraus_ops)
         # 4th bsm2 transmission loss
         bsm2_loss_kraus_ops = build_kraus_ops(truncation, bsm2_loss)
-        for i in len(bsm2_loss_kraus_ops):
+        for i in range(len(bsm2_loss_kraus_ops)):
             bsm2_loss_kraus_ops[i] = np.kron(np.eye((truncation+1)**2),np.kron(bsm2_loss_kraus_ops[i],np.eye(truncation+1)))
-        joint_dm_pre_bsm = apply_quantum_channel(state_memo2_loss, bsm1_loss_kraus_ops)
+        joint_dm_pre_bsm = apply_quantum_channel(state_bsm1_loss, bsm1_loss_kraus_ops)
 
         # determine BSM outcome
-        bsm1_tot = np.eye(truncation+1).dot(bsm.bsm1).dot(np.eye(truncation+1))
-        meas1_tot = matrix_power(bsm1_tot, 1/2)
-        bsm2_tot = np.eye(truncation+1).dot(bsm.bsm2).dot(np.eye(truncation+1))
-        meas2_tot = matrix_power(bsm2_tot, 1/2)
-        prob1 = np.trace(joint_dm_pre_bsm.dot(bsm1_tot))
-        prob2 = np.trace(joint_dm_pre_bsm.dot(bsm2_tot))
+        bsm1_tot = np.kron(np.kron(np.eye(truncation+1),bsm.bsm1),np.eye(truncation+1))
+        meas1_tot = fractional_matrix_power(bsm1_tot, 1/2)
+        bsm2_tot = np.kron(np.kron(np.eye(truncation+1),bsm.bsm2),np.eye(truncation+1))
+        meas2_tot = fractional_matrix_power(bsm2_tot, 1/2)
+        prob1 = np.trace(joint_dm_pre_bsm.dot(bsm1_tot)).real
+        prob2 = np.trace(joint_dm_pre_bsm.dot(bsm2_tot)).real
         prob0 = 1 - prob1 - prob2
         
         outcome = bsm.rng.choice(np.arange(3), p=[prob0, prob1, prob2])
@@ -425,7 +427,7 @@ def run_simulation(pulse_number, truncation, formalism, bsm1_effi, bsm2_effi, bs
         memo_state = partial_trace_bsm(joint_dm_post_bsm, truncation) 
         reference_bell_state = build_bell_state(truncation, sign, phase=phase_bsm)
         heralded_states.append({"state": memo_state, "sign": sign, "phase": phase_bsm})
-        fidelity = np.trace(memo_state.dot(reference_bell_state)) # fidelity of stored state with respect to pure standard state
+        fidelity = np.trace(memo_state.dot(reference_bell_state)).real # fidelity of stored state with respect to pure standard state
         fidelity_list.append(fidelity)
     
     heralded_num = len(fidelity_list)
@@ -445,5 +447,5 @@ if __name__ == "__main__":
     print("Total simulation time: ", sim_time)
     print("Average time per pulse: ", sim_time / Pulse_num)
     print("-"*30)
-    print("The heralding probability is " + results[3])
-    print("The average fidelity of heralded entangled states is " + results[4])
+    print("The heralding probability is ", results[3])
+    print("The average fidelity of heralded entangled states is ", results[4])
