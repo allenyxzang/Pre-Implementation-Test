@@ -280,7 +280,7 @@ class BSM(BeamsplitterMeas):
         rng: Random number generator.
     """
     def __init__(self, truncation, efficiency1=1, efficiency2=1, phase=0, seed=0):
-        super().__init__(truncation, efficiency1=1, efficiency2=1, phase=0, seed=0)
+        super().__init__(truncation, efficiency1=efficiency1, efficiency2=efficiency2, phase=phase, seed=seed)
         
         identity = np.eye(self.truncation+1)
         self.bsm1 = np.dot(self.povm1,np.kron(identity,identity)-self.povm2)
@@ -338,7 +338,7 @@ class DMOffDiagonalMeas(BeamsplitterMeas):
         rng: Random number generator.
     """
     def __init__(self, truncation, efficiency1=1, efficiency2=1, phase=0, seed=0):
-        super().__init__(truncation, efficiency1=1, efficiency2=1, phase=0, seed=0)
+        super().__init__(efficiency1=efficiency1, efficiency2=efficiency2, phase=phase, seed=seed)
 
 
 def run_simulation(pulse_number, truncation, formalism, bsm1_effi, bsm2_effi, bsm1_loss, bsm2_loss, \
