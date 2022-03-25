@@ -5,6 +5,7 @@ from scipy.linalg import fractional_matrix_power
 from scipy.sparse import csr_matrix
 from scipy.special import binom
 from math import factorial
+import matplotlib.pyplot as plt
 
 
 # simulation parameters
@@ -341,6 +342,7 @@ class DMOffDiagonalMeas(BeamsplitterMeas):
         super().__init__(efficiency1=efficiency1, efficiency2=efficiency2, phase=phase, seed=seed)
 
 
+
 def run_simulation(pulse_number, truncation, formalism, bsm1_effi, bsm2_effi, bsm1_loss, bsm2_loss, \
     memo1_abs_effi, memo2_abs_effi, spdc1_mean, spdc2_mean, phase_bsm):
     """
@@ -365,6 +367,7 @@ def run_simulation(pulse_number, truncation, formalism, bsm1_effi, bsm2_effi, bs
     heralded_states = []
     fidelity_list = []
 
+    """
     for i in range(pulse_number):
         # initailization
         bsm_seed = i
@@ -407,6 +410,55 @@ def run_simulation(pulse_number, truncation, formalism, bsm1_effi, bsm2_effi, bs
         meas1_tot = fractional_matrix_power(bsm1_tot, 1/2)
         bsm2_tot = np.kron(np.kron(np.eye(truncation+1),bsm.bsm2),np.eye(truncation+1))
         meas2_tot = fractional_matrix_power(bsm2_tot, 1/2)
+    """
+
+    # bring initialization out of loop (initialization does not contain any random and is identical for each loop)
+    initial_state1 = SPDCOutputState(mean_num=spdc1_mean, truncation=truncation, formalism=formalism)
+    initial_state2 = SPDCOutputState(mean_num=spdc2_mean, truncation=truncation, formalism=formalism)
+    # bsm = BSM(truncation, efficiency1=bsm1_effi, efficiency2=bsm2_effi, seed=bsm_seed)
+    bsm = BSM(truncation, efficiency1=bsm1_effi, efficiency2=bsm2_effi)
+
+    if formalism == "dm":
+        joint_dm_init = np.kron(initial_state1.state, initial_state2.state)
+    elif formalism == "ket":
+        joint_ket_init = np.kron(initial_state1.state, initial_state2.state)
+        joint_dm_init = np.outer(joint_ket_init,joint_ket_init.conj().T)
+    else:
+        raise ValueError("Invalid quantum state formalism " + formalism)
+
+    # apply photon loss channels to state, each channel applies to only a subsystem so they should commute, order of application should not matter
+    # 1st memo1 abs loss
+    memo1_abs_kraus_ops = build_kraus_ops(truncation, 1-memo1_abs_effi)
+    for i in range(len(memo1_abs_kraus_ops)):
+        memo1_abs_kraus_ops[i] = np.kron(np.kron(memo1_abs_kraus_ops[i],np.eye(truncation+1)),np.eye((truncation+1)**2))
+    state_memo1_loss = apply_quantum_channel(joint_dm_init, memo1_abs_kraus_ops)
+    # 2nd memo2 abs loss
+    memo2_abs_kraus_ops = build_kraus_ops(truncation, 1-memo2_abs_effi)
+    for i in range(len(memo2_abs_kraus_ops)):
+        memo2_abs_kraus_ops[i] = np.kron(np.eye((truncation+1)**2),np.kron(np.eye(truncation+1),memo2_abs_kraus_ops[i]))
+    state_memo2_loss = apply_quantum_channel(state_memo1_loss, memo2_abs_kraus_ops)
+    # 3rd bsm1 transmission loss
+    bsm1_loss_kraus_ops = build_kraus_ops(truncation, bsm1_loss)
+    for i in range(len(bsm1_loss_kraus_ops)):
+        bsm1_loss_kraus_ops[i] = np.kron(np.kron(np.eye(truncation+1),bsm1_loss_kraus_ops[i]),np.eye((truncation+1)**2))
+    state_bsm1_loss = apply_quantum_channel(state_memo2_loss, bsm1_loss_kraus_ops)
+    # 4th bsm2 transmission loss
+    bsm2_loss_kraus_ops = build_kraus_ops(truncation, bsm2_loss)
+    for i in range(len(bsm2_loss_kraus_ops)):
+        bsm2_loss_kraus_ops[i] = np.kron(np.eye((truncation+1)**2),np.kron(bsm2_loss_kraus_ops[i],np.eye(truncation+1)))
+    joint_dm_pre_bsm = apply_quantum_channel(state_bsm1_loss, bsm1_loss_kraus_ops)
+
+    # determine BSM outcome
+    bsm1_tot = np.kron(np.kron(np.eye(truncation+1),bsm.bsm1),np.eye(truncation+1))
+    meas1_tot = fractional_matrix_power(bsm1_tot, 1/2)
+    bsm2_tot = np.kron(np.kron(np.eye(truncation+1),bsm.bsm2),np.eye(truncation+1))
+    meas2_tot = fractional_matrix_power(bsm2_tot, 1/2)
+    prob1 = np.trace(joint_dm_pre_bsm.dot(bsm1_tot)).real
+    prob2 = np.trace(joint_dm_pre_bsm.dot(bsm2_tot)).real
+    prob0 = 1 - prob1 - prob2
+    heralded_prob_num = prob1 + prob2
+
+    for i in range(pulse_number):
         prob1 = np.trace(joint_dm_pre_bsm.dot(bsm1_tot)).real
         prob2 = np.trace(joint_dm_pre_bsm.dot(bsm2_tot)).real
         prob0 = 1 - prob1 - prob2
@@ -434,11 +486,12 @@ def run_simulation(pulse_number, truncation, formalism, bsm1_effi, bsm2_effi, bs
     heralded_prob = heralded_num/pulse_number
     fidelity_avg = np.mean(fidelity_list)
 
-    return heralded_states, fidelity_list, heralded_num, heralded_prob, fidelity_avg
+    # return heralded_states, fidelity_list, heralded_num, heralded_prob, fidelity_avg
+    return heralded_states, fidelity_list, heralded_num, heralded_prob, fidelity_avg, heralded_prob_num
 
 
 if __name__ == "__main__":
-
+    """
     tick = time()
     results = run_simulation(Pulse_num, Truncation, Formalism, Bsm1_effi, Bsm2_effi, Bsm1_loss, Bsm2_loss, \
         Memo1_abs_effi, Memo2_abs_effi, SPDC1_mean, SPDC2_mean, Phase_bsm)
@@ -449,3 +502,26 @@ if __name__ == "__main__":
     print("-"*30)
     print("The heralding probability is ", results[3])
     print("The average fidelity of heralded entangled states is ", results[4])
+    """
+
+    # compare with analytical result of heralding prob
+    mu_list = np.linspace(0.1, 0.2, num=10)
+    anl = 2 * mu_list / (1+mu_list)**2
+    simu = []
+    numeric = []
+    for mu in mu_list:
+        results = run_simulation(20000, 1, Formalism, Bsm1_effi, Bsm2_effi, Bsm1_loss, Bsm2_loss, \
+            Memo1_abs_effi, Memo2_abs_effi, mu, mu, Phase_bsm)
+        prob = results[3]
+        prob_numeric = results[5]
+        simu.append(prob)
+        numeric.append(prob_numeric)
+        
+    plt.plot(mu_list, simu, label="simulation")
+    plt.plot(mu_list, numeric, marker='o', label="numerical")
+    plt.plot(mu_list, anl, label="analytical")
+    plt.title("comparison between simulation and analytical results")
+    plt.xlabel("mean photon number $\mu$")
+    plt.ylabel("heralding probability")
+    plt.legend(loc="lower right")
+    plt.show()
