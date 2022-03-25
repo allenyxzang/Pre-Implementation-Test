@@ -171,7 +171,7 @@ class SPDCOutputState():
         self.formalism = formalism
 
         # create state component amplitudes list
-        amp_list = [(np.sqrt(mean_num/(mean_num+1)))**m/np.sqrt(mean_num+1) for m in range(truncation)]
+        amp_list = [(np.sqrt(self.mean_num/(self.mean_num+1)))**m/np.sqrt(self.mean_num+1) for m in range(self.truncation)]
         amp_square_list = [amp**2 for amp in amp_list]
         amp_list.append(np.sqrt(1-sum(amp_square_list)))
         
